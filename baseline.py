@@ -24,17 +24,6 @@ def max_len(x,y,pe,tokenizer):
             max_len = len(token["input_ids"])
     return max_len
 
-#statementにevidenceを加える
-def data_concat(df):
-    concat = []
-    """
-    for i in range(len(df.index)):
-        evidence = df.iloc[i]["Primary_Evidence"].split(".")
-        evidence.remove("")
-        concat.append(df.iloc[i]["Statement"]+random.choices(evidence,k = 1)) #max_sent_len 1976となり、BERTに入らない
-    """
-    return concat
-
 #dataset
 class CustomDataset(Dataset):
     def __init__(self,x,y,pe,tokenizer,max_len):
@@ -99,6 +88,7 @@ class Bert(torch.nn.Module):
         _,output = self.bert(ids,mask,return_dict = False)
         output = self.dropout(output)
         output = self.linear(output) #(30,output_size)
+        output = self.dropout(output)
         #output = output.squeeze() #(30)
         #output = self.softmax(output)
         #output = self.sigmoid(output)
