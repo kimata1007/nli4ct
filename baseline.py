@@ -19,8 +19,9 @@ def open_file(path):
 def max_len(x,y,pe,tokenizer):
     max_len = 0
     for i in range(len(y)):
-        token = tokenizer.encode_plus("[CLS] "+x[i]+" [SEP] "+" ".join(list(map(lambda s: s+" [SEP]",pe[i].split(".")))))
-        if max_len < len(token["input_ids"]) and len(token["input_ids"]) <= 512:
+        pe_list = list(map(lambda s: s+" [SEP]",pe[i].split(". "))) #mapとlambda便利
+        token = tokenizer.encode_plus("[CLS] "+x[i]+" [SEP] "+" ".join(pe_list),add_special_tokens=False)
+        if max_len < len(token["input_ids"]) and len(token["input_ids"]) <= 400:
             max_len = len(token["input_ids"])
     return max_len
 
@@ -42,10 +43,10 @@ class CustomDataset(Dataset):
         text = self.x[index]
         f_evdence = self.pe[index] #str型
         text = "[CLS] "+text+" [SEP] " #special tokenの付与
-        f_evidence_list = list(map(lambda s: s+" [SEP] ",f_evdence.split("."))) #複数文の各文の末尾に[SEP]を挿入
+        f_evidence_list = list(map(lambda s: s+" [SEP] ",f_evdence.split(". "))) #複数文の各文の末尾に[SEP]を挿入 8.3などの小数点との区別
         inputs = self.tokenizer.encode_plus(
             text,
-            " ".join(f_evidence_list),
+            "".join(f_evidence_list),
             add_special_tokens=False,
             max_length=self.max_len,
             pad_to_max_length=True,
@@ -57,7 +58,7 @@ class CustomDataset(Dataset):
         return torch.LongTensor(ids),torch.LongTensor(mask),torch.tensor(self.y[index])
 
 def dataset(df,y,max_len):
-    custom_dataset = CustomDataset(df["Statement"].values,y,df["Primary_Evidence"],tokenizer,max_len = max_len)
+    custom_dataset = CustomDataset(df["Statement"].values,y,df["Primary_Evidence"].values,tokenizer,max_len = max_len)
     ids = torch.zeros(len(custom_dataset),max_len)
     mask = torch.zeros(len(custom_dataset),max_len)
     labels = torch.zeros(len(custom_dataset))
@@ -68,10 +69,10 @@ def dataset(df,y,max_len):
         labels[i] = custom_dataset[i][2]
     return ids,mask,labels
 
-def dataloader(ids,mask,labels,batch_size):
+def dataloader(ids,mask,labels,shuffle,batch_size):
     #ids,mask,labels --> tensor
     dataset = TensorDataset(ids,mask,labels)
-    dataloader = DataLoader(dataset,batch_size = batch_size,shuffle = True)
+    dataloader = DataLoader(dataset,batch_size = batch_size,shuffle = shuffle)
     return dataloader
 
 #Bert implement
@@ -130,7 +131,11 @@ def train_step(model,loss,epoch,device,w_and_b,confirm,patience):
             train_losses[i] = train_loss
             F_scores[i] = F_score
             accuracies[i] = accuracy
-            
+        
+        train_mean_loss = torch.mean(train_losses)
+        F_mean_score = torch.mean(F_scores)
+        accuracy_mean = torch.mean(accuracies)
+
         model.eval()
         with torch.no_grad():
             for i,(dev_x,dev_mask,dev_y) in enumerate(tqdm(dev_dataloader)):
@@ -146,10 +151,6 @@ def train_step(model,loss,epoch,device,w_and_b,confirm,patience):
                 dev_F_scores[i] = dev_F_score
                 dev_accuracies[i] = dev_accuracy
 
-
-        train_mean_loss = torch.mean(train_losses)
-        F_mean_score = torch.mean(F_scores)
-        accuracy_mean = torch.mean(accuracies)
         dev_mean_loss = torch.mean(dev_losses)
         dev_F_mean_score = torch.mean(dev_F_scores)
         dev_accuracy_mean = torch.mean(dev_accuracies)
@@ -166,8 +167,8 @@ def train_step(model,loss,epoch,device,w_and_b,confirm,patience):
                 "epoch: loss/dev":dev_mean_loss,
                 "epoch: F_score/dev":dev_F_mean_score,
                 "epoch: accuracy/dev":dev_accuracy_mean,
-                "epoch: Recall/train":recall,
-                "epoch: Precision/train":precision})
+                "epoch: Recall/dev":dev_recall,
+                "epoch: Precision/dev":dev_precision})
         
         if dev_F_mean_score > F_max:
             F_max = dev_F_mean_score
@@ -197,7 +198,7 @@ def evaluate(y_list,pred_list,iterator):
     recall = tp/(tp+fn)
     precision = tp/(tp+fp)
     F_score = 2*recall*precision/(recall+precision)
-    if confirm == True and iterator % 44 == 0:
+    if confirm == True and iterator % 30 == 0:
         print("true positive = {},false negative = {}, false positive = {},true negative = {}".format(tp,fn,fp,tn))
     return F_score,accuracy,recall,precision
 
@@ -231,7 +232,7 @@ if __name__ == "__main__":
             "patience":patience,
         }
     #gpu設定
-    device = torch.device("cuda:0" if (torch.cuda.is_available() and args.device) else "cpu")
+    device = torch.device("cuda:1" if (torch.cuda.is_available() and args.device) else "cpu")
 
     df = open_file("train_dataset.tsv")
     df_train,df_dev = train_test_split(df,test_size = 0.3,random_state = 0) #train: 1320 dev: 330 
@@ -244,8 +245,8 @@ if __name__ == "__main__":
     #print(len([c for c in y_train if c % 2 == 1]))
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
     #max_len
-    train_max_len = max_len(df_train["Statement"].values,y_train,df_train["Primary_Evidence"],tokenizer)
-    dev_max_len = max_len(df_dev["Statement"].values,y_dev,df_dev["Primary_Evidence"],tokenizer)
+    train_max_len = max_len(df_train["Statement"].values,y_train,df_train["Primary_Evidence"].values,tokenizer)
+    dev_max_len = max_len(df_dev["Statement"].values,y_dev,df_dev["Primary_Evidence"].values,tokenizer)
 
     print("train : max_len",train_max_len)
     print("dev : max_len",dev_max_len)
@@ -254,13 +255,16 @@ if __name__ == "__main__":
     #dev_custom_dataset = CustomDataset(df_dev["Statement"].values,y_dev,tokenizer,max_len = dev_max_len)
     train_ids,train_mask,train_labels = dataset(df_train,y_train,train_max_len)
     dev_ids,dev_mask,dev_labels = dataset(df_dev,y_dev,dev_max_len)
-    train_dataloader = dataloader(train_ids,train_mask,train_labels,batch_size=30)
-    dev_dataloader = dataloader(dev_ids,dev_mask,dev_labels,batch_size=30)
-    token = tokenizer.convert_ids_to_tokens(train_ids[2]) #id->tokenに変換してくれる
-    #token = tokenizer.convert_ids_to_tokens(dev_ids[0])
-    print(token)
-    print("dataloader作成完了")
+    train_dataloader = dataloader(train_ids,train_mask,train_labels,True,batch_size = 16)
+    dev_dataloader = dataloader(dev_ids,dev_mask,dev_labels,False,batch_size=16)
+    #token = tokenizer.convert_ids_to_tokens(train_ids[4]) #id->tokenに変換してくれる
+    dev_token = tokenizer.convert_ids_to_tokens(dev_ids[4])
+    print("token:",dev_token)
+    #print("id:",dev_ids[4])
+    #print("label:",dev_labels[4])
 
+    print("dataloader作成完了")
+    
     model = Bert(2,dropout_rate)
     model.to(device)
     print("modelのload完了")
@@ -269,3 +273,4 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(params=model.parameters(),lr=lr,weight_decay = weight_decay)
     
     #train_step(model,loss,epoch,device,w_and_b,confirm,patience)
+    
