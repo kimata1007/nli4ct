@@ -1,5 +1,5 @@
 import torch
-from transformers import BertTokenizer,BertModel,DataCollatorWithPadding
+from transformers import BertTokenizer,BertModel,BertForSequenceClassification,DataCollatorWithPadding
 from torch.utils.data import Dataset,TensorDataset,DataLoader
 import pandas as pd
 import argparse
@@ -20,7 +20,7 @@ def max_len(x,y,pe,tokenizer):
     max_len = 0
     for i in range(len(y)):
         pe_list = list(map(lambda s: s+" [SEP]",pe[i].split(". "))) #mapとlambda便利
-        token = tokenizer.encode_plus("[CLS] "+x[i]+" [SEP] "+" ".join(pe_list),add_special_tokens=False)
+        token = tokenizer.encode_plus("[CLS] "+x[i]+" [SEP] "+"".join(pe_list),add_special_tokens=False)
         if max_len < len(token["input_ids"]) and len(token["input_ids"]) <= 400:
             max_len = len(token["input_ids"])
     return max_len
@@ -57,7 +57,7 @@ class CustomDataset(Dataset):
 
         return torch.LongTensor(ids),torch.LongTensor(mask),torch.tensor(self.y[index])
 
-def dataset(df,y,max_len):
+def dataset(df,y,tokenizer,max_len):
     custom_dataset = CustomDataset(df["Statement"].values,y,df["Primary_Evidence"].values,tokenizer,max_len = max_len)
     ids = torch.zeros(len(custom_dataset),max_len)
     mask = torch.zeros(len(custom_dataset),max_len)
@@ -89,6 +89,7 @@ class Bert(torch.nn.Module):
         _,output = self.bert(ids,mask,return_dict = False)
         output = self.dropout(output)
         output = self.linear(output) #(30,output_size)
+        output = self.dropout(output)
         #output = output.squeeze() #(30)
         #output = self.softmax(output)
         #output = self.sigmoid(output)
@@ -101,9 +102,10 @@ def loss_function():
     return loss
 
 #学習
-def train_step(model,loss,epoch,device,w_and_b,confirm,patience):
+def train_step(model,loss,train_dataloader,dev_dataloader,epoch,device,w_and_b,confirm,patience):
     num = 0
     F_max = 0
+    optimizer = torch.optim.Adam(params=model.parameters(),lr=lr,weight_decay = weight_decay)
     for epo in range(epoch):
         train_losses = torch.zeros(len(train_dataloader))
         dev_losses = torch.zeros(len(dev_dataloader))
@@ -118,16 +120,20 @@ def train_step(model,loss,epoch,device,w_and_b,confirm,patience):
             train_x,train_mask,train_y = train_x.to(device).long(),train_mask.to(device).long(),train_y.to(device).long()
             optimizer.zero_grad()
             y_tilde = model(train_x,train_mask).float()
+            #print("y_tilde:",y_tilde.size())
             train_loss = loss(y_tilde,train_y)
             train_loss.backward()
             optimizer.step()
 
             #pred_list = list(torch.round(y_tilde)) BCELoss用
             pred_list = list(torch.max(y_tilde,1)[1])
-
+            #print("pred_list:",len(pred_list))
             y_list = list(train_y)
+            #print("y_list:",len(y_list))
             F_score,accuracy,recall,precision = evaluate(y_list,pred_list,i)
+            #print("F_score:",F_score)
             train_losses[i] = train_loss
+            #print("train_losses:",train_losses)
             F_scores[i] = F_score
             accuracies[i] = accuracy
         
@@ -233,8 +239,9 @@ if __name__ == "__main__":
     #gpu設定
     device = torch.device("cuda:1" if (torch.cuda.is_available() and args.device) else "cpu")
 
-    df = open_file("train_dataset.tsv")
-    df_train,df_dev = train_test_split(df,test_size = 0.3,random_state = 0) #train: 1320 dev: 330 
+    df_train = open_file("./dataset/train_data.tsv")
+    df_dev = open_file("./dataset/dev_data.tsv")
+    #df_train,df_dev = train_test_split(df,test_size = 0.3,random_state = 0) #train: 1320 dev: 330 
     #print(df)
     #正解ラベルをEntailment-->1 Contradiction -->0
     y_train = pd.get_dummies(df_train,columns=["Label"])["Label_Entailment"].values #list形式
@@ -242,6 +249,8 @@ if __name__ == "__main__":
     #print("train data:",y_train)
     #print("dev data:",y_dev)
     #print(len([c for c in y_train if c % 2 == 1]))
+    #print(len([c for c in y_dev if c % 2 == 1]))
+
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
     #max_len
     train_max_len = max_len(df_train["Statement"].values,y_train,df_train["Primary_Evidence"].values,tokenizer)
@@ -252,13 +261,16 @@ if __name__ == "__main__":
 
     #train_custom_dataset = CustomDataset(df_train["Statement"].values,y_train,tokenizer,max_len = train_max_len)
     #dev_custom_dataset = CustomDataset(df_dev["Statement"].values,y_dev,tokenizer,max_len = dev_max_len)
-    train_ids,train_mask,train_labels = dataset(df_train,y_train,train_max_len)
-    dev_ids,dev_mask,dev_labels = dataset(df_dev,y_dev,dev_max_len)
+    train_ids,train_mask,train_labels = dataset(df_train,y_train,tokenizer,train_max_len)
+    dev_ids,dev_mask,dev_labels = dataset(df_dev,y_dev,tokenizer,dev_max_len)
     train_dataloader = dataloader(train_ids,train_mask,train_labels,True,batch_size = 16)
     dev_dataloader = dataloader(dev_ids,dev_mask,dev_labels,False,batch_size=16)
+    #print(len(train_dataloader))
+    #print(len(dev_dataloader))
     #token = tokenizer.convert_ids_to_tokens(train_ids[4]) #id->tokenに変換してくれる
-    dev_token = tokenizer.convert_ids_to_tokens(dev_ids[4])
-    print("token:",dev_token)
+    
+    #dev_token = tokenizer.convert_ids_to_tokens(dev_ids[4])
+    #print("token:",dev_token)
     #print("id:",dev_ids[4])
     #print("label:",dev_labels[4])
 
@@ -269,7 +281,14 @@ if __name__ == "__main__":
     print("modelのload完了")
     loss = loss_function()
     #最適化関数
-    optimizer = torch.optim.Adam(params=model.parameters(),lr=lr,weight_decay = weight_decay)
     
-    #train_step(model,loss,epoch,device,w_and_b,confirm,patience)
-    
+    train_step(
+        model,
+        loss,
+        train_dataloader,
+        dev_dataloader,
+        epoch,
+        device,
+        w_and_b,
+        confirm,
+        patience)

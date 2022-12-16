@@ -6,13 +6,13 @@ import numpy as np
 
 
 #----get_data----
-def get_data(train_path = "./Training_data/train.json"):
+def get_data(train_path):
     with open(train_path) as json_file:
         train_dict = json.load(json_file) #辞書形式で読み込み
     #train_dict[list(train_dict.keys())[1]]
     return train_dict
     
-def get_data_detail(train,path= "./Training_data/Clinical trial json/"):
+def get_data_detail(train,path):
     statements = []
     primary_section_list = []
     secondary_section_list = []
@@ -67,6 +67,8 @@ def create_dict(train,train_primary_evidence_dict,train_secondary_evidence_dict)
                                 "Primary_Evidence": train_primary_evidence_dict[train.index[i]],
                                 "Secondary_Evidence": None}
     return dict
+
+
 if __name__ == "__main__":
     #データの確認
     """
@@ -74,34 +76,66 @@ if __name__ == "__main__":
     print(train.info())
     print(train.columns)
     """
-    train_dict = get_data()
+    train_dict = get_data("./training_data/train.json")
+    dev_dict = get_data("./training_data/dev.json")
     train = pd.DataFrame(train_dict) #DataFrame形式にする
+    dev = pd.DataFrame(dev_dict)
+
+    #print("train.jsonのデータ数:",len(train.index))
     train = train.T
+    dev = dev.T
+    #print(train)
     print("train.jsonのデータ数:",len(train.index))
     print("Statement:",train.iloc[2]["Statement"])
     print("="*100)
     #print(statements)
     print("Clinical Trial ID:",train.iloc[2]["Primary_id"])
-    primary_ctr,secondary_ctr,primary_section_list,secondary_section_list,primary_evidence_index_list,secondary_evidence_index_list,train_primary_evidence_dict,train_secondary_evidence_dict= get_data_detail(train)
+    primary_ctr,secondary_ctr,primary_section_list,secondary_section_list,primary_evidence_index_list,secondary_evidence_index_list,train_primary_evidence_dict,train_secondary_evidence_dict= get_data_detail(train,path = "./training_data/CT json/")
+    dev_primary_ctr,dev_secondary_ctr,dev_primary_section_list,dev_secondary_section_list,dev_primary_evidence_index_list,dev_secondary_evidence_index_list,dev_primary_evidence_dict,dev_secondary_evidence_dict = get_data_detail(dev,path = "./training_data/CT json/")
     print(primary_ctr)
     print("="*100)
     print("Section_id:",train.iloc[2]["Section_id"])
     print("="*100)
     print("primary_section:",len(primary_section_list))
     print("="*100)
-    print("primary_evidence_index:",len(primary_evidence_index_list)) #1650
+    print("primary_evidence_index:",len(primary_evidence_index_list)) #1700
     print("="*100)
-    print("train_primary_evidence:",len(train_primary_evidence_dict)) #1650
+    print("train_primary_evidence:",len(train_primary_evidence_dict)) #1700
     print("="*100)
-    print("secondary_section:",len(secondary_section_list)) #615
+    print("secondary_section:",len(secondary_section_list)) #665
     print("="*100)
-    print("secondary_evidence_index:",len(secondary_evidence_index_list)) #615
+    print("secondary_evidence_index:",len(secondary_evidence_index_list)) #665
     print("="*100)
-    print("train_secondary_evidence:",len(train_secondary_evidence_dict)) #615
+    print("train_secondary_evidence:",len(train_secondary_evidence_dict)) #665
+
+    #dev dataの確認
+    print("="*100)
+    print("="*100)
+    print("dev dataの確認")
+    print("dev.jsonのデータ数:",len(dev.index))
+    print("Statement:",train.iloc[2]["Statement"])
+    print("="*100)
+    print("Section_id:",dev.iloc[2]["Section_id"])
+    print("="*100)
+    print("primary_section:",len(dev_primary_section_list))
+    print("="*100)
+    print("primary_evidence_index:",len(dev_primary_evidence_index_list)) #200
+    print("="*100)
+    print("train_primary_evidence:",len(dev_primary_evidence_dict)) #200
+    print("="*100)
+    print("secondary_section:",len(dev_secondary_section_list)) #60
+    print("="*100)
+    print("secondary_evidence_index:",len(dev_secondary_evidence_index_list)) #60
+    print("="*100)
+    print("train_secondary_evidence:",len(dev_secondary_evidence_dict)) #60
 
     dict = create_dict(train,train_primary_evidence_dict,train_secondary_evidence_dict)
+    dev_dict = create_dict(dev,dev_primary_evidence_dict,dev_secondary_evidence_dict)
     df_dict = pd.DataFrame(dict).T
+    dev_dict = pd.DataFrame(dev_dict).T
+
     pd.set_option("display.max_rows",None)
     #print(df_dict)
     #df_dict.to_pickle("dataset.pkl")
-    df_dict.to_csv("train_dataset.tsv",sep = '\t')
+    df_dict.to_csv("train_data.tsv",sep = '\t')
+    dev_dict.to_csv("dev_data.tsv",sep = '\t')
